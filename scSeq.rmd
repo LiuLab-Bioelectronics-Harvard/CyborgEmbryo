@@ -1,0 +1,150 @@
+---
+title: "cardiac_analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(writexl)
+library(tidyverse)
+library(ggpubr)
+library(RColorBrewer)
+library(cowplot)
+library(ggthemes)
+```
+
+```{r}
+device_data_10x <- Read10X(
+  "T-S2",
+  gene.column = 2,
+  cell.column = 1,
+  unique.features = TRUE,
+  strip.suffix = FALSE
+)
+
+control_data_10x <- Read10X(
+  "C-S2",
+  gene.column = 2,
+  cell.column = 1,
+  unique.features = TRUE,
+  strip.suffix = FALSE
+)
+clu <- "Set1"
+```
+
+
+```{r}
+Device <- CreateSeuratObject(counts = device_data_10x, project = "Device", min.cells = 0, min.features = 0)
+Control <- CreateSeuratObject(counts = control_data_10x, project = "Control", min.cells = 0, min.features = 0)
+rm(device_data_10x)
+rm(control_data_10x)
+```
+
+
+```{r}
+precombined <- merge(x = Device, y = Control, add.cell.ids = c("Device","Control"),merge.data = FALSE, project = "combined")
+```
+
+
+
+```{r}
+precombined <- NormalizeData(precombined, scale.factor = median(precombined$nCount_RNA))
+precombined <- FindVariableFeatures(precombined, selection.method = "vst", nfeatures = 3000)
+all.genes_precombined <- rownames(precombined)
+precombined <- ScaleData(precombined, features = all.genes_precombined)
+precombined <- RunPCA(precombined, features = VariableFeatures(object = precombined))
+precombined <- FindNeighbors(precombined, dims = 1:15, k.param = 40)
+precombined <- FindClusters(precombined, resolution = 0.4)
+precombined <- RunUMAP(precombined, dims = 1:20)
+#precombined <- RunTSNE(precombined, dims = 1:50)
+DimPlot(precombined, reduction = "umap",label = TRUE)
+#DimPlot(precombined, reduction = "tsne",label = TRUE)
+```
+
+
+
+```{r}
+DimPlot(precombined, reduction = "umap",label = TRUE, group.by = "orig.ident") | DimPlot(precombined, reduction = "umap",label = TRUE, split.by = "orig.ident")
+```
+```{r}
+precombined <- RenameIdents(precombined, `0` = "hindgut progenitor",`1` = "neuron",`2` = "notochord", `3` = "hatching gland", `4` = "somite",`5` = "epidermal", `6` = "blood")
+```
+
+```{r}
+p1 <- DimPlot(precombined, group.by = "orig.ident",pt.size = 0.5) + scale_color_brewer(palette = "Set1", direction = -1)
+p2 <- DimPlot(precombined[,precombined$orig.ident == "Device"], reduction = "umap",pt.size = 0.7) + scale_color_brewer(palette = clu) + ggtitle("Device")
+p3 <- DimPlot(precombined[,precombined$orig.ident == "Control"], reduction = "umap",pt.size = 0.7) + scale_color_brewer(palette = clu) + ggtitle("Control")
+panelA <- (p1 | p2 | p3) 
+panelA & theme(legend.position = "right") &theme(plot.title = element_text(hjust = 0.5))& theme(legend.key.size = unit(1, 'cm'), #change legend key size
+        legend.key.height = unit(0.3, 'cm'), #change legend key height
+        legend.key.width = unit(0.3, 'cm'), #change legend key width
+        legend.title = element_text(size=4), #change legend title font size
+        legend.text = element_text(size=4))
+```
+```{r}
+p_sample <- DimPlot(precombined, group.by = "orig.ident",pt.size = 1.5) + scale_color_brewer(palette = "Set1", direction = -1) + ggtitle("sample_identity")
+p_ident <- DimPlot(precombined, reduction = "umap",pt.size = 1.5) + scale_color_brewer(palette = clu) + ggtitle("cell_type")
+p_sample | p_ident
+```
+
+
+
+```{r}
+p4 <- VlnPlot(precombined, features = c("hrg","darmin", "map1a","myt1","vcan","akap2.1", "evpl","ezr","tnnc2","actn3", "apoe","frem2", "hbe1"), stack = TRUE, flip = TRUE, fill.by = "ident") + scale_fill_brewer(palette = clu)+
+    theme(text = element_text(size=4),
+        axis.text.x = element_text(size=4),axis.text.y = element_text(size=4),axis.title.x = element_text(size=4),axis.title.y = element_text(size=4))  + theme(axis.text.x = element_text(angle = 15))
+
+p4
+```
+```{r}
+p_heat_small <- DoHeatmap(precombined, features = c("hrg","darmin","sesn3","fabp7","tuba1c.1","map1a","myt1","atp1a3","stx1b","stmn2-a","vcan","akap2.1", "evpl","lgals3","itln1","ezr","tnnc2","myh4","myl1","actn3", "apoe","frem2","cdh1","hbe1","hba3","hbz"), raster = FALSE, size = 0, group.colors = brewer.pal(length(levels(precombined)), clu))+
+  scale_fill_viridis_c() + scale_color_brewer(palette = clu)
+p5 <- p_heat_small +
+    theme(text = element_text(size=5),
+        axis.text.x = element_text(size=5),axis.text.y = element_text(size=5),axis.title.x = element_text(size=5),axis.title.y = element_text(size=5)) 
+p5
+```
+
+
+```{r}
+test <- FetchData(precombined, vars = c(rownames(precombined),"seurat_clusters","orig.ident"))
+```
+
+```{r}
+mycompare <- list(c("Device","Control"))
+p_exp <- ggbarplot(test %>% filter(seurat_clusters == 1) %>% select(c("seurat_clusters","orig.ident","fabp7","stmn2-a","dbn1","dpysl3-a","atp1a3","stx1b","map1a","tuba1c.1","myt1")) %>% pivot_longer(fabp7:myt1, names_to = "gene", values_to = "expression"), x = "orig.ident", y = "expression", fill  = "orig.ident", add = c("mean_se"), facet.by = "gene") + stat_compare_means(comparisons =  mycompare,aes(label = ..p.signif..), method = "t.test", label.y = 1.5) + scale_fill_brewer(palette = "Set1") + theme_few() + facet_wrap(~gene, ncol = 3, strip.position = "top", scales = "free")+ 
+  theme(strip.text.y.left = element_text(angle=45)) + 
+          xlab("Identity") + ylab("Expression Level")
+
+p_exp
+```
+
+```{r}
+panelB <- (p4 | p5 | p_exp) & theme(legend.position = "right") &theme(plot.title = element_text(hjust = 0.5))& theme(legend.key.size = unit(1, 'cm'), #change legend key size
+        legend.key.height = unit(0.5, 'cm'), #change legend key height
+        legend.key.width = unit(0.5, 'cm'), #change legend key width
+        legend.title = element_text(size=5), #change legend title font size
+        legend.text = element_text(size=5))
+```
+```{r}
+panelA/panelB  & theme(text = element_text(size=5, family = "Arial"),
+        axis.text.x = element_text(size=5),axis.text.y = element_text(size=5),axis.title.x = element_text(size=5),axis.title.y = element_text(size=5))
+```
+
+```{r}
+(FeaturePlot(precombined, features = c("hrg","myt1","map1a","vcan"), split.by = "orig.ident", pt.size = 0.5) | FeaturePlot(precombined, features = c("ezr","tnnc2","frem2","hbe1"), split.by = "orig.ident", pt.size = 0.5)) & theme(text = element_text(size=5, family = "Arial"),
+        axis.text.x = element_text(size=5),axis.text.y = element_text(size=5),axis.title.x = element_text(size=5),axis.title.y = element_text(size=5))
+```
+
+
+
+
+
+
